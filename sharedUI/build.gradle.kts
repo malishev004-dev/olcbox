@@ -1,5 +1,4 @@
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
-import org.gradle.kotlin.dsl.withType
 import org.jetbrains.kotlin.gradle.plugin.mpp.KotlinNativeTarget
 
 plugins {
@@ -12,12 +11,20 @@ plugins {
 }
 
 kotlin {
-    androidTarget { //We need the deprecated target to have working previews
-        compilerOptions { jvmTarget = JvmTarget.JVM_17 }
+    android {
+        namespace = "org.turnbox.app"
+        compileSdk = 36
+        minSdk = 23
+
+        compilerOptions {
+            jvmTarget.set(JvmTarget.JVM_17)
+        }
     }
 
     jvm {
-        compilerOptions { jvmTarget = JvmTarget.JVM_17 }
+        compilerOptions {
+            jvmTarget.set(JvmTarget.JVM_17)
+        }
     }
 
     iosArm64()
@@ -31,6 +38,7 @@ kotlin {
             api(libs.compose.resources)
             api(libs.compose.ui.tooling.preview)
             api(libs.compose.material3)
+
             implementation(compose.materialIconsExtended)
             implementation(libs.kermit)
             implementation(libs.kotlinx.coroutines.core)
@@ -72,7 +80,6 @@ kotlin {
             implementation(libs.ktor.client.darwin)
             implementation(libs.kstore.file)
         }
-
     }
 
     targets
@@ -86,24 +93,4 @@ kotlin {
                 }
             }
         }
-}
-
-dependencies {
-    debugImplementation(libs.compose.ui.tooling)
-}
-android {
-    namespace = "org.turnbox.app"
-    compileSdk = 36
-    defaultConfig {
-        minSdk = 23
-    }
-    sourceSets {
-        getByName("main") {
-            jniLibs.srcDirs("src/androidMain/jniLibs")
-        }
-    }
-    compileOptions {
-        sourceCompatibility = JavaVersion.VERSION_17
-        targetCompatibility = JavaVersion.VERSION_17
-    }
 }

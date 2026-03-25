@@ -25,8 +25,10 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import org.turnbox.app.data.TUN2SOCKS_CONFIG_FILE_NAME
-import org.turnbox.app.data.model.HysteriaConfig
+import org.turnbox.app.data.model.TurnConfig
 import org.turnbox.app.data.repository.HysteriaConfigRepository
 import org.turnbox.app.vpn.data.KEY_IS_VPN_CONFIG_READY
 import org.turnbox.app.vpn.data.KEY_VPN_CONFIG_PATH
@@ -48,7 +50,8 @@ class Hysteria2VpnService : VpnService() {
     private var turnLoggingThread: Thread? = null
 
     private val job = SupervisorJob()
-    private val scope = CoroutineScope(Dispatchers.Main + job)
+    private val scope = CoroutineScope(Dispatchers.Default + job)
+    private val startMutex = Mutex()
 
     private var startupJob: Job? = null
     private var lastConfigPath: String? = null
@@ -89,13 +92,14 @@ class Hysteria2VpnService : VpnService() {
         private fun handleNetworkChange(network: Network, reason: String) {
             val caps = connectivityManager.getNetworkCapabilities(network) ?: return
             if (caps.hasTransport(NetworkCapabilities.TRANSPORT_VPN) ||
-                !caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)) return
+                !caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+            ) return
 
             val netName = getNetName(caps)
             val isNew = currentNetwork != network
 
             if (isNew || reason.contains("Fallback") || reason.contains("LOSS")) {
-                addLog("🔄 $reason: $netName (force restart)")
+                addLog("🔄 $reason: $netName")
 
                 currentNetwork = network
                 setUnderlyingNetworks(arrayOf(network))
@@ -106,8 +110,12 @@ class Hysteria2VpnService : VpnService() {
                     Log.w(TAG, "bind failed", e)
                 }
 
-                if (System.currentTimeMillis() - lastMigrationTime < 4000) return
-                lastMigrationTime = System.currentTimeMillis()
+                val now = System.currentTimeMillis()
+                if (now - lastMigrationTime < 3000) {
+                    addLog("⏳ Migration throttled")
+                    return
+                }
+                lastMigrationTime = now
 
                 lastConfigPath?.let { startVpnChecked(true, it, isMigration = true) }
             }
@@ -127,7 +135,9 @@ class Hysteria2VpnService : VpnService() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         val isStart = intent?.action == ACTION_START_VPN
-        if (!isStart) { cleanup(); stopSelf(); return START_NOT_STICKY }
+        if (!isStart) {
+            cleanup(); stopSelf(); return START_NOT_STICKY
+        }
 
         if (isRunning && netFileDescriptor != null) return START_STICKY
 
@@ -138,8 +148,9 @@ class Hysteria2VpnService : VpnService() {
             val path = pref[KEY_VPN_CONFIG_PATH] ?: ""
 
             connectivityManager.bindProcessToNetwork(null)
-            startVpnChecked(ready, path, isMigration = false)
+
             registerNetworkMonitor()
+            startVpnChecked(ready, path, isMigration = false)
         }
         return START_STICKY
     }
@@ -153,7 +164,7 @@ class Hysteria2VpnService : VpnService() {
                 .build()
             connectivityManager.registerNetworkCallback(request, networkCallback)
             isCallbackRegistered = true
-            addLog("📡 Network monitor (with onLost) registered")
+            addLog("📡 Network monitor registered")
         } catch (e: Exception) {
             Log.e(TAG, "Monitor error", e)
         }
@@ -161,8 +172,11 @@ class Hysteria2VpnService : VpnService() {
 
     private fun startForeground() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val channel = NotificationChannel("CHANNEL_ID", "Turnbox VPN", NotificationManager.IMPORTANCE_LOW)
-            (getSystemService(NOTIFICATION_SERVICE) as NotificationManager).createNotificationChannel(channel)
+            val channel =
+                NotificationChannel("CHANNEL_ID", "Turnbox VPN", NotificationManager.IMPORTANCE_LOW)
+            (getSystemService(NOTIFICATION_SERVICE) as NotificationManager).createNotificationChannel(
+                channel
+            )
         }
         val notif = NotificationCompat.Builder(this, "CHANNEL_ID")
             .setContentTitle("Turnbox")
@@ -170,85 +184,113 @@ class Hysteria2VpnService : VpnService() {
             .setSmallIcon(android.R.drawable.ic_dialog_info)
             .setOngoing(true)
             .build()
-        ServiceCompat.startForeground(this, 100, notif,
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE else 0)
+        ServiceCompat.startForeground(
+            this, 100, notif,
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE else 0
+        )
     }
 
-    private fun startVpnChecked(isConfigReady: Boolean, configPath: String, isMigration: Boolean = false) {
+    private fun startVpnChecked(
+        isConfigReady: Boolean,
+        configPath: String,
+        isMigration: Boolean = false
+    ) {
         if (!isConfigReady || configPath.isBlank()) return
         lastConfigPath = configPath
 
         startupJob?.cancel()
         startupJob = scope.launch {
-            try { stopTun2socks() } catch (_: Exception) {}
-            addLog("🛑 Old tun2socks stopped")
-            stopTransportProcesses()
+            startMutex.withLock {
+                addLog(if (isMigration) "🔄 Reconnecting tunnel..." else "🚀 Starting VPN...")
 
-            if (isMigration) delay(1200)
+                try {
+                    stopTun2socks()
+                } catch (_: Exception) {
+                }
 
-            val repo = configRepository
-            if (repo == null) {
-                addLog("❌ ConfigRepository is NULL")
-                return@launch
-            }
-            val config = repo.loadConfig()
+                stopTransportProcesses()
+                delay(1000)
 
-            if (config.turnEnabled) {
-                startTurnInternal(config)
-                val delayMs = if (isMigration) 2200L else 5000L
-                delay(delayMs)
-            }
+                val repo = configRepository ?: run {
+                    addLog("❌ ConfigRepository is NULL")
+                    return@withLock
+                }
 
-            startHysteriaInternal(configPath)
+                val selectedTurnType = repo.getSelectedTurnType()
+                val baseTurnConfig = repo.loadTurnConfig(selectedTurnType)
+                val selectedHysteriaId = repo.getSelectedHysteriaId()
+                val hysteriaConfig = repo.loadHysteriaConfig(selectedHysteriaId)
 
-            netFileDescriptor?.close()
-            val fd = establishSystemVpnTunnel()
-            if (fd != -1) {
-                startTun2socks(File(filesDir, TUN2SOCKS_CONFIG_FILE_NAME).absolutePath, fd)
-                isRunning = true
-                _isConnected.value = true
-                addLog(if (isMigration) "🔄 Full tunnel recreated after Wi-Fi loss ✅" else "✅ Full start OK")
+                val turnConfig = baseTurnConfig.copy(peer = hysteriaConfig.server)
+
+                if (turnConfig.enabled) {
+                    startTurnInternal(turnConfig)
+                    delay(if (isMigration) 1500L else 3000L)
+                }
+
+                startHysteriaInternal(configPath)
+                delay(500)
+
+                netFileDescriptor?.close()
+                val fd = establishSystemVpnTunnel()
+                if (fd != -1) {
+                    startTun2socks(File(filesDir, TUN2SOCKS_CONFIG_FILE_NAME).absolutePath, fd)
+                    isRunning = true
+                    _isConnected.value = true
+                    addLog("✅ VPN Tunnel established")
+                }
             }
         }
     }
 
-    private fun startTurnInternal(config: HysteriaConfig) {
+    private fun startTurnInternal(config: TurnConfig) {
+        addLog("🚀 Starting turn tunnel with peer: ${config.peer}")
         val cmd = mutableListOf<String>().apply {
             add(File(applicationInfo.nativeLibraryDir, "libvkturn.so").absolutePath)
-            add("-peer"); add(config.turnPeer)
-            add(if (config.turnLink.contains("yandex")) "-yandex-link" else "-vk-link")
-            add(config.turnLink)
-            add("-listen"); add(config.turnListen)
-            add("-n"); add(config.turnThreads.toString())
-            if (config.turnUdp) add("-udp")
-            if (config.turnNoDtls) add("-no-dtls")
+            add("-peer"); add(config.peer)
+            if (config.link.isNotBlank()) {
+                add(if (config.link.contains("yandex")) "-yandex-link" else "-vk-link")
+                add(config.link)
+            }
+            add("-listen"); add(config.listen)
+            add("-n"); add(config.threads.toString())
+            if (config.udp) add("-udp")
+            if (config.noDtls) add("-no-dtls")
         }
         turnProcess = ProcessBuilder(cmd).redirectErrorStream(true).start()
-        turnLoggingThread = thread {
-            Scanner(turnProcess!!.inputStream).use { sc ->
-                while (sc.hasNextLine()) {
-                    val line = sc.nextLine()
-                    if (line.contains("Established")) addLog("✅ TURN OK")
-                    Log.v("vk-turn", line)
+        turnLoggingThread = thread(name = "TurnLog") {
+            try {
+                Scanner(turnProcess?.inputStream).use { sc ->
+                    while (sc.hasNextLine()) {
+                        val line = sc.nextLine()
+                        if (line.contains("Established")) addLog("✅ TURN OK")
+                        Log.v("vk-turn", line)
+                    }
                 }
+            } catch (_: Exception) {
             }
         }
-        addLog("🚀 TURN launched")
     }
 
     private fun startHysteriaInternal(configPath: String) {
-        val cmd = listOf(File(applicationInfo.nativeLibraryDir, "libhysteria.so").absolutePath, "-c", configPath)
+        val cmd = listOf(
+            File(applicationInfo.nativeLibraryDir, "libhysteria.so").absolutePath,
+            "-c",
+            configPath
+        )
         hysteriaProcess = ProcessBuilder(cmd).redirectErrorStream(true).start()
-        hysteriaLoggingThread = thread {
-            Scanner(hysteriaProcess!!.inputStream).use { sc ->
-                while (sc.hasNextLine()) {
-                    val line = sc.nextLine()
-                    if (line.contains("connected")) addLog("✅ HY2 Connected")
-                    Log.v("hysteria", line)
+        hysteriaLoggingThread = thread(name = "HyLog") {
+            try {
+                Scanner(hysteriaProcess?.inputStream).use { sc ->
+                    while (sc.hasNextLine()) {
+                        val line = sc.nextLine()
+                        if (line.contains("connected")) addLog("✅ HY2 Connected")
+                        Log.v("hysteria", line)
+                    }
                 }
+            } catch (_: Exception) {
             }
         }
-        addLog("🚀 Hysteria launched")
     }
 
     private fun establishSystemVpnTunnel(): Int {
@@ -259,10 +301,15 @@ class Hysteria2VpnService : VpnService() {
             .addDisallowedApplication(packageName)
             .addRoute("0.0.0.0", 0)
 
-        listOf("com.vkontakte.android", "ru.yandex.searchplugin", "ru.yandex.yandexbrowser",
+        listOf(
+            "com.vkontakte.android", "ru.yandex.searchplugin", "ru.yandex.yandexbrowser",
             "com.yandex.browser", "com.android.vending", "com.google.android.gms",
-            "com.android.captiveportallogin").forEach {
-            try { builder.addDisallowedApplication(it) } catch (_: Exception) {}
+            "com.android.captiveportallogin"
+        ).forEach {
+            try {
+                builder.addDisallowedApplication(it)
+            } catch (_: Exception) {
+            }
         }
 
         currentNetwork?.let { builder.setUnderlyingNetworks(arrayOf(it)) }
@@ -273,21 +320,38 @@ class Hysteria2VpnService : VpnService() {
     }
 
     private fun stopTransportProcesses() {
-        hysteriaProcess?.destroy(); hysteriaProcess = null
-        hysteriaLoggingThread?.interrupt(); hysteriaLoggingThread = null
-        turnProcess?.destroy(); turnProcess = null
-        turnLoggingThread?.interrupt(); turnLoggingThread = null
+        addLog("🛑 Stopping transport processes...")
+
+        hysteriaProcess?.destroy()
+        hysteriaProcess = null
+        hysteriaLoggingThread?.interrupt()
+        hysteriaLoggingThread = null
+
+        turnProcess?.destroy()
+        turnProcess = null
+        turnLoggingThread?.interrupt()
+        turnLoggingThread = null
     }
 
     private fun cleanup() {
         isRunning = false
         _isConnected.value = false
         startupJob?.cancel()
-        try { stopTun2socks() } catch (_: Exception) {}
-        stopTransportProcesses()
-        netFileDescriptor?.close(); netFileDescriptor = null
+        scope.launch {
+            startMutex.withLock {
+                try {
+                    stopTun2socks()
+                } catch (_: Exception) {
+                }
+                stopTransportProcesses()
+                netFileDescriptor?.close(); netFileDescriptor = null
+            }
+        }
         if (isCallbackRegistered) {
-            try { connectivityManager.unregisterNetworkCallback(networkCallback) } catch (_: Exception) {}
+            try {
+                connectivityManager.unregisterNetworkCallback(networkCallback)
+            } catch (_: Exception) {
+            }
             isCallbackRegistered = false
         }
         connectivityManager.bindProcessToNetwork(null)
@@ -299,9 +363,14 @@ class Hysteria2VpnService : VpnService() {
     }
 
     companion object {
-        init { System.loadLibrary("tun2socks") }
-        const val ACTION_START_VPN = "us.leaf3stones.hy2droid.proxy.Hysteria2VpnService.ACTION_START_VPN"
-        const val ACTION_STOP_VPN = "us.leaf3stones.hy2droid.proxy.Hysteria2VpnService.ACTION_STOP_VPN"
+        init {
+            System.loadLibrary("tun2socks")
+        }
+
+        const val ACTION_START_VPN =
+            "us.leaf3stones.hy2droid.proxy.Hysteria2VpnService.ACTION_START_VPN"
+        const val ACTION_STOP_VPN =
+            "us.leaf3stones.hy2droid.proxy.Hysteria2VpnService.ACTION_STOP_VPN"
 
         private val _logs = MutableStateFlow<List<String>>(emptyList())
         val logs = _logs.asStateFlow()

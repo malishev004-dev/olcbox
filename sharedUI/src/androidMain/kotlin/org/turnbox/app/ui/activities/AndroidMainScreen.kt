@@ -3,15 +3,20 @@ package org.turnbox.app.ui.activities
 import android.app.Activity
 import android.net.Uri
 import android.net.VpnService
-import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.ActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.platform.LocalContext
+import org.turnbox.app.ui.features.home.HomeScreen
+import org.turnbox.app.ui.features.home.HomeScreenViewModel
+import org.turnbox.app.ui.features.locations.LocationViewModel
 
 @Composable
-fun AndroidMainScreen(viewModel: MainActivityViewModel) {
+fun AndroidMainScreen(
+    viewModel: HomeScreenViewModel,
+    locationViewModel: LocationViewModel
+) {
     val context = LocalContext.current
 
     val vpnRequestLauncher = rememberLauncherForActivityResult(
@@ -30,9 +35,10 @@ fun AndroidMainScreen(viewModel: MainActivityViewModel) {
         }
     }
 
-    MainScreenContent(
+    HomeScreen(
         viewModel = viewModel,
-        onVpnToggleRequested = {
+        locationViewModel = locationViewModel,
+        onToggleClick = {
             val prepIntent = VpnService.prepare(context)
             if (prepIntent != null) {
                 vpnRequestLauncher.launch(prepIntent)
@@ -43,8 +49,11 @@ fun AndroidMainScreen(viewModel: MainActivityViewModel) {
         onImportFileRequested = {
             filePickerLauncher.launch("*/*")
         },
-        onCopyToastRequested = {
-            Toast.makeText(context, "Config copied!", Toast.LENGTH_SHORT).show()
+        onImportFromClipboardRequested = {
+            viewModel.onPasteFromClipboard()
+        },
+        onCopyConfigRequested = {
+            viewModel.onCopyFullConfigClicked()
         }
     )
 }

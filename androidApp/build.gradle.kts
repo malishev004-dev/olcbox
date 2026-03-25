@@ -2,7 +2,7 @@ import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 
 plugins {
     alias(libs.plugins.compose.compiler)
-    alias(libs.plugins.kotlin.android)
+    // kotlin-android больше не нужен в AGP 9.0+
     alias(libs.plugins.android.application)
 }
 
@@ -36,6 +36,7 @@ android {
     }
 }
 
+// В AGP 9.0+ настройки Kotlin для Android делаются так:
 kotlin {
     compilerOptions { jvmTarget.set(JvmTarget.JVM_17) }
 }

@@ -9,20 +9,14 @@ import kotlinx.serialization.json.putJsonObject
 @Serializable
 data class HysteriaConfig(
     val server: String = "",
+    val name: String = "",
     val password: String = "",
     val sni: String = "",
-    val turnEnabled: Boolean = false,
-    val turnPeer: String = "",
-    val turnLink: String = "",
-    val turnThreads: Int = 8,
-    val turnUdp: Boolean = true,
-    val turnNoDtls: Boolean = false,
-    val turnListen: String = "127.0.0.1:9000",
     val insecure: Boolean = true
 ) {
     
-    fun getFullConfig(): String {
-        val effectiveServer = if (turnEnabled) turnListen else server
+    fun getFullConfig(turn: TurnConfig): String {
+        val effectiveServer = if (turn.enabled) turn.listen else server
         val mapper = mapOf(SERVER_ADDRESS_PLACEHOLDER to effectiveServer, PASSWORD_PLACEHOLDER to password)
         var resultingConf = HYSTERIA_CONFIG_TEXT_DATA
         for (m in mapper) {
@@ -35,24 +29,27 @@ data class HysteriaConfig(
     /**
      * Генерирует структурированный JSON конфиг для обмена (Copy/Paste)
      */
-    fun toJsonConfig(): String {
+    fun toJsonConfig(turn: TurnConfig): String {
         val json = Json { prettyPrint = true }
         val root = buildJsonObject {
             put("version", 1)
             putJsonObject("hysteria") {
                 put("server", server)
+                put("name", name)
                 put("password", password)
                 put("sni", sni)
                 put("insecure", insecure)
             }
             putJsonObject("turn") {
-                put("enabled", turnEnabled)
-                put("peer", turnPeer)
-                put("link", turnLink)
-                put("threads", turnThreads)
-                put("udp", turnUdp)
-                put("noDtls", turnNoDtls)
-                put("listen", turnListen)
+                put("enabled", turn.enabled)
+                put("peer", turn.peer)
+                put("link", turn.link)
+                put("user", turn.user)
+                put("pass", turn.pass)
+                put("threads", turn.threads)
+                put("udp", turn.udp)
+                put("noDtls", turn.noDtls)
+                put("listen", turn.listen)
             }
         }
         return json.encodeToString(kotlinx.serialization.json.JsonObject.serializer(), root)
@@ -79,8 +76,8 @@ auth: $PASSWORD_PLACEHOLDER
 $SNI_PLACEHOLDER
 
 bandwidth:
-  up: 100 mbps
-  down: 100 mbps
+  up: 20 mbps
+  down: 20 mbps
 
 socks5:
   listen: 127.0.0.1:1080

@@ -1,8 +1,9 @@
 package org.turnbox.app.ui.theme
 
-import androidx.compose.runtime.*
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.compositionLocalOf
+import androidx.compose.runtime.mutableStateOf
 
-// CompositionLocal для ручного переключения темы (доступен на всех платформах)
 internal val LocalThemeIsDark = compositionLocalOf { mutableStateOf(true) }
 
 @Composable

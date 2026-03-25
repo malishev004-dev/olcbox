@@ -5,6 +5,7 @@ import kotlinx.coroutines.flow.StateFlow
 interface VpnManager {
     val logs: StateFlow<List<String>>
     val isConnected: StateFlow<Boolean>
+    fun needsPermission(): Boolean
     fun startVpn()
     fun stopVpn()
 }
