@@ -29,6 +29,10 @@ internal object OlcRtcConnectionChecker {
 
                 try {
                     Mobile.setProviders()
+                    Mobile.setLink("direct")
+                    Mobile.setTransport(config.transport)
+                    Mobile.setDNS("1.1.1.1:53")
+                    Mobile.setVP8Options(config.vp8Fps.toLong(), config.vp8Batch.toLong())
                     Mobile.start(
                         config.bypassProvider,
                         config.id,

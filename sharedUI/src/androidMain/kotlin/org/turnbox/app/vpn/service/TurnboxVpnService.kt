@@ -349,7 +349,11 @@ class TurnboxVpnService : VpnService() {
                 throw IllegalStateException("SOCKS port $socksPort is still in use")
             }
             bindProcessToNetwork(upstream, "Bound to ${getNetName(upstream)}")
-            addLog("Starting olcRTC provider=${location.bypassProvider}, room=${location.id}")
+            configureMobileTransport(location)
+            addLog(
+                "Starting olcRTC provider=${location.bypassProvider}, " +
+                    "transport=${location.transport}, room=${location.id}"
+            )
             Mobile.start(
                 location.bypassProvider,
                 location.id,
@@ -373,6 +377,15 @@ class TurnboxVpnService : VpnService() {
         } finally {
             unbindProcessFromNetwork()
         }
+    }
+
+    private fun configureMobileTransport(location: LocationConfig) {
+        val config = location.normalized()
+        Mobile.setProviders()
+        Mobile.setLink("direct")
+        Mobile.setTransport(config.transport)
+        Mobile.setDNS("1.1.1.1:53")
+        Mobile.setVP8Options(config.vp8Fps.toLong(), config.vp8Batch.toLong())
     }
 
     private fun startTun2socks(pfd: ParcelFileDescriptor): Boolean {

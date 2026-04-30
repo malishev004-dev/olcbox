@@ -153,11 +153,30 @@ class LocationViewModel(
     }
 
     fun onBypassProviderChanged(value: String) {
+        val provider = LocationConfig.normalizeProvider(value)
         editingConfig = editingConfig.copy(
-            bypassProvider = LocationConfig.normalizeProvider(value)
+            bypassProvider = provider,
+            transport = LocationConfig.normalizeTransport(editingConfig.transport, provider)
         )
     }
 
+    fun onTransportChanged(value: String) {
+        editingConfig = editingConfig.copy(
+            transport = LocationConfig.normalizeTransport(value, editingConfig.bypassProvider)
+        )
+    }
+
+    fun onVp8FpsChanged(value: String) {
+        editingConfig = editingConfig.copy(
+            vp8Fps = value.filter { it.isDigit() }.toIntOrNull() ?: 0
+        )
+    }
+
+    fun onVp8BatchChanged(value: String) {
+        editingConfig = editingConfig.copy(
+            vp8Batch = value.filter { it.isDigit() }.toIntOrNull() ?: 0
+        )
+    }
 
     private fun validateName(name: String) {
         nameError = when {

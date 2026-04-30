@@ -29,10 +29,32 @@ class DesktopProxyModeTest {
 
             assertEquals("/tmp/olcrtc", command[0])
             assertEquals(listOf("-mode", "cnc"), command.slice(1..2))
+            assertContains(command, "-transport")
+            assertContains(command, LocationConfig.TRANSPORT_VP8CHANNEL)
+            assertContains(command, "-vp8-fps")
+            assertContains(command, "60")
+            assertContains(command, "-vp8-batch")
+            assertContains(command, "8")
             assertContains(command, provider)
             assertContains(command, "room-$provider")
             assertContains(command, "10808")
         }
+    }
+
+    @Test
+    fun olcRtcCommandAllowsDatachannelForNonTelemostProviders() {
+        val command = OlcRtcCommand(
+            binary = Path.of("/tmp/olcrtc"),
+            location = LocationConfig(
+                name = "WB",
+                id = "room-wb",
+                key = "b".repeat(64),
+                bypassProvider = LocationConfig.PROVIDER_WB_STREAM,
+                transport = LocationConfig.TRANSPORT_DATACHANNEL
+            )
+        ).args()
+
+        assertContains(command, LocationConfig.TRANSPORT_DATACHANNEL)
     }
 
     @Test
@@ -68,7 +90,6 @@ class DesktopProxyModeTest {
         assertEquals("reg", enable.first().first())
         assertContains(enable.flatten(), "AutoConfigURL")
         assertContains(enable.flatten(), "http://127.0.0.1:10809/proxy.pac")
-        assertEquals("powershell.exe", enable.last().first())
 
         val restore = WindowsProxyController.restoreCommands(
             WindowsProxyState(
@@ -84,6 +105,17 @@ class DesktopProxyModeTest {
         assertContains(restore.flatten(), "ProxyOverride")
         assertContains(restore.flatten(), "AutoConfigURL")
         assertContains(restore.flatten(), "delete")
+    }
+
+    @Test
+    fun windowsProxyRefreshCommandUsesFullyQualifiedWinInetSignature() {
+        val refresh = WindowsProxyController.refreshCommand()
+        val script = refresh.last()
+
+        assertEquals("powershell.exe", refresh.first())
+        assertContains(script, "System.Runtime.InteropServices.DllImport")
+        assertContains(script, "System.IntPtr")
+        assertContains(script, "InternetSetOption")
     }
 
     @Test

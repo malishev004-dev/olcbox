@@ -24,6 +24,7 @@ val hasReleaseKeystore =
 android {
     namespace = "org.turnbox.app.androidApp"
     compileSdk = 36
+    ndkVersion = "28.2.13676358"
 
     defaultConfig {
         minSdk = 23

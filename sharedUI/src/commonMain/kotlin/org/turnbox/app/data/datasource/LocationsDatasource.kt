@@ -168,6 +168,28 @@ class LocationsRepositoryImpl(
             root.string("bypassProvider"),
             root.string("provider")
         )
+        val transportArgs = firstNotBlank(
+            source.string("transport_args"),
+            source.string("transportArgs"),
+            source.string("args"),
+            root.string("transport_args"),
+            root.string("transportArgs"),
+            root.string("args")
+        )
+        val vp8Fps = firstInt(
+            source.int("vp8_fps"),
+            source.int("vp8Fps"),
+            root.int("vp8_fps"),
+            root.int("vp8Fps"),
+            transportArgInt(transportArgs, "-vp8-fps")
+        ) ?: LocationConfig.DEFAULT_VP8_FPS
+        val vp8Batch = firstInt(
+            source.int("vp8_batch"),
+            source.int("vp8Batch"),
+            root.int("vp8_batch"),
+            root.int("vp8Batch"),
+            transportArgInt(transportArgs, "-vp8-batch")
+        ) ?: LocationConfig.DEFAULT_VP8_BATCH
 
         val location = LocationConfig(
             name = firstNotBlank(source.string("name"), root.string("name")),
@@ -183,7 +205,14 @@ class LocationsRepositoryImpl(
                 source.string("password"),
                 root.string("key")
             ),
-            bypassProvider = provider
+            bypassProvider = provider,
+            transport = firstNotBlank(
+                source.string("transport"),
+                root.string("transport"),
+                if (transportArgs.isNotBlank()) LocationConfig.TRANSPORT_VP8CHANNEL else null
+            ),
+            vp8Fps = vp8Fps,
+            vp8Batch = vp8Batch
         ).normalized()
 
         if (!location.isComplete()) return null
@@ -215,11 +244,26 @@ class LocationsRepositoryImpl(
         return (this[name] as? JsonPrimitive)?.contentOrNull
     }
 
+    private fun JsonObject.int(name: String): Int? {
+        return (this[name] as? JsonPrimitive)?.intOrNull
+    }
+
     private fun JsonElement.jsonObjectOrNull(): JsonObject? {
         return runCatching { jsonObject }.getOrNull()
     }
 
     private fun firstNotBlank(vararg values: String?): String {
         return values.firstOrNull { !it.isNullOrBlank() } ?: ""
+    }
+
+    private fun firstInt(vararg values: Int?): Int? {
+        return values.firstOrNull { it != null }
+    }
+
+    private fun transportArgInt(args: String, name: String): Int? {
+        if (args.isBlank()) return null
+        val parts = args.split(Regex("\\s+")).filter { it.isNotBlank() }
+        val index = parts.indexOf(name)
+        return parts.getOrNull(index + 1)?.toIntOrNull()
     }
 }

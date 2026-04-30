@@ -13,8 +13,11 @@ dependencies {
     implementation(libs.androidx.lifecycle.runtime)
 }
 
+val defaultOlcRtcRepo = rootProject.layout.projectDirectory.asFile.parentFile
+    .resolve("olcrtc-original")
+    .absolutePath
 val olcrtcRepo = providers.environmentVariable("OLCRTC_REPO")
-    .orElse("/Users/alexanderanisimov/Personal/Projects/olcrtc")
+    .orElse(defaultOlcRtcRepo)
 val generatedNativeResources = layout.buildDirectory.dir("generated/desktopNativeResources")
 val hevSocks5TunnelSourceDir = rootProject.layout.projectDirectory.dir("androidApp/src/main/jni/hev-socks5-tunnel")
 val currentBuildOs = OperatingSystem.current()

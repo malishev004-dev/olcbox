@@ -97,6 +97,41 @@ class LocationsRepositoryImplTest {
         assertTrue(bundle.locations.isEmpty())
     }
 
+    @Test
+    fun telemostLocationsForceVp8AndOtherProvidersCanUseDatachannel() = runTest {
+        val source = FakeLocationsDataSource()
+        val input = """
+            {
+              "version": 3,
+              "locations": [
+                {
+                  "storage_id": "telemost",
+                  "name": "Telemost",
+                  "id": "75047680642749",
+                  "key": "${"a".repeat(64)}",
+                  "bypass_provider": "telemost",
+                  "transport": "datachannel"
+                },
+                {
+                  "storage_id": "wb",
+                  "name": "WB",
+                  "id": "room-wb",
+                  "key": "${"b".repeat(64)}",
+                  "bypass_provider": "wb_stream",
+                  "transport": "datachannel"
+                }
+              ]
+            }
+        """.trimIndent()
+
+        LocationsRepositoryImpl(source).importText(input)
+
+        val imported = source.stored
+        assertNotNull(imported)
+        assertEquals(LocationConfig.TRANSPORT_VP8CHANNEL, imported.locations[0].location.transport)
+        assertEquals(LocationConfig.TRANSPORT_DATACHANNEL, imported.locations[1].location.transport)
+    }
+
     private class FakeLocationsDataSource(
         var stored: LocationBundleV3? = null,
         private val legacy: List<Pair<String, String>> = emptyList(),

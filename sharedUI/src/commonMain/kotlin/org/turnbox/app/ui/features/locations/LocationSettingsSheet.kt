@@ -41,6 +41,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -133,6 +134,26 @@ fun LocationSettingsContent(
             enabled = !isSaving,
             onProviderSelected = viewModel::onBypassProviderChanged
         )
+
+        Spacer(modifier = Modifier.height(16.dp))
+
+        TransportPicker(
+            selectedProvider = config.bypassProvider,
+            selectedTransport = config.transport,
+            enabled = !isSaving,
+            onTransportSelected = viewModel::onTransportChanged
+        )
+
+        if (LocationConfig.normalizeTransport(config.transport, config.bypassProvider) == LocationConfig.TRANSPORT_VP8CHANNEL) {
+            Spacer(modifier = Modifier.height(12.dp))
+            Vp8OptionsRow(
+                fps = config.vp8Fps,
+                batch = config.vp8Batch,
+                enabled = !isSaving,
+                onFpsChanged = viewModel::onVp8FpsChanged,
+                onBatchChanged = viewModel::onVp8BatchChanged
+            )
+        }
 
         Spacer(modifier = Modifier.height(16.dp))
 
@@ -315,6 +336,140 @@ private fun BypassProviderPicker(
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun TransportPicker(
+    selectedProvider: String,
+    selectedTransport: String,
+    enabled: Boolean,
+    onTransportSelected: (String) -> Unit
+) {
+    val provider = LocationConfig.normalizeProvider(selectedProvider)
+    val selected = LocationConfig.normalizeTransport(selectedTransport, provider)
+    val options = LocationConfig.supportedTransportsForProvider(provider)
+
+    Column(modifier = Modifier.fillMaxWidth()) {
+        Text(
+            text = "Transport",
+            style = MaterialTheme.typography.labelLarge,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(bottom = 8.dp)
+        )
+
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            options.forEach { transport ->
+                val isSelected = selected == transport
+                val container = if (isSelected) {
+                    MaterialTheme.colorScheme.primaryContainer
+                } else {
+                    MaterialTheme.colorScheme.surfaceContainer
+                }
+                val border = if (isSelected) {
+                    MaterialTheme.colorScheme.outline
+                } else {
+                    MaterialTheme.colorScheme.outlineVariant
+                }
+
+                Surface(
+                    onClick = { if (enabled) onTransportSelected(transport) },
+                    enabled = enabled,
+                    modifier = Modifier
+                        .weight(1f)
+                        .height(58.dp),
+                    shape = RoundedCornerShape(18.dp),
+                    color = container,
+                    border = BorderStroke(1.dp, border)
+                ) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 12.dp, vertical = 8.dp),
+                        verticalArrangement = Arrangement.Center
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                text = LocationConfig.transportDisplayName(transport),
+                                color = if (isSelected) {
+                                    MaterialTheme.colorScheme.onPrimaryContainer
+                                } else {
+                                    MaterialTheme.colorScheme.onSurface
+                                },
+                                fontWeight = FontWeight.SemiBold,
+                                fontSize = 13.sp,
+                                maxLines = 1,
+                                modifier = Modifier.weight(1f)
+                            )
+
+                            if (isSelected) {
+                                Icon(
+                                    imageVector = Icons.Rounded.Check,
+                                    contentDescription = "Selected",
+                                    tint = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                            }
+                        }
+
+                        Text(
+                            text = LocationConfig.transportDescription(transport),
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            fontSize = 11.sp,
+                            maxLines = 1
+                        )
+                    }
+                }
+            }
+        }
+
+        if (provider == LocationConfig.PROVIDER_TELEMOST) {
+            Text(
+                text = "Telemost is locked to VP8 because its DataChannel path is unstable.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(top = 8.dp)
+            )
+        }
+    }
+}
+
+@Composable
+private fun Vp8OptionsRow(
+    fps: Int,
+    batch: Int,
+    enabled: Boolean,
+    onFpsChanged: (String) -> Unit,
+    onBatchChanged: (String) -> Unit
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        OutlinedTextField(
+            value = fps.takeIf { it > 0 }?.toString().orEmpty(),
+            onValueChange = onFpsChanged,
+            label = { Text("VP8 FPS") },
+            placeholder = { Text(LocationConfig.DEFAULT_VP8_FPS.toString()) },
+            enabled = enabled,
+            singleLine = true,
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number, imeAction = ImeAction.Next),
+            modifier = Modifier.weight(1f)
+        )
+
+        OutlinedTextField(
+            value = batch.takeIf { it > 0 }?.toString().orEmpty(),
+            onValueChange = onBatchChanged,
+            label = { Text("VP8 Batch") },
+            placeholder = { Text(LocationConfig.DEFAULT_VP8_BATCH.toString()) },
+            enabled = enabled,
+            singleLine = true,
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number, imeAction = ImeAction.Next),
+            modifier = Modifier.weight(1f)
+        )
     }
 }
 

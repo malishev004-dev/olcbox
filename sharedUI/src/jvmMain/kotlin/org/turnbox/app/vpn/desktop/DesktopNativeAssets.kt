@@ -9,8 +9,6 @@ import kotlin.io.path.Path
 import kotlin.io.path.exists
 
 internal object DesktopNativeAssets {
-    private const val DEFAULT_OLCRTC_REPO = "/Users/alexanderanisimov/Personal/Projects/olcrtc"
-
     fun resolveOlcRtcBinary(): Path {
         val fileName = olcRtcFileName()
         return resolveBinary(
@@ -81,12 +79,25 @@ internal object DesktopNativeAssets {
 
     private fun olcRtcSourceCandidates(fileName: String): List<Path> {
         val explicitBinary = System.getenv("OLCRTC_BINARY")?.takeIf { it.isNotBlank() }?.let { Path(it) }
-        val repo = System.getenv("OLCRTC_REPO")?.takeIf { it.isNotBlank() } ?: DEFAULT_OLCRTC_REPO
+        val explicitRepo = System.getenv("OLCRTC_REPO")?.takeIf { it.isNotBlank() }?.let { Path(it) }
+        val defaultRepo = Path("..").resolve("olcrtc-original")
         return listOfNotNull(
             explicitBinary,
-            Path(repo).resolve("build").resolve(fileName),
-            Path(repo).resolve(fileName.removeSuffix(".exe")),
-            Path(repo).resolve("olcrtc")
+            explicitRepo
+        ).flatMap { repoOrBinary ->
+            if (repoOrBinary.fileName?.toString() == fileName || repoOrBinary.fileName?.toString() == fileName.removeSuffix(".exe")) {
+                listOf(repoOrBinary)
+            } else {
+                repoCandidates(repoOrBinary, fileName)
+            }
+        } + repoCandidates(defaultRepo, fileName)
+    }
+
+    private fun repoCandidates(repo: Path, fileName: String): List<Path> {
+        return listOf(
+            repo.resolve("build").resolve(fileName),
+            repo.resolve(fileName.removeSuffix(".exe")),
+            repo.resolve("olcrtc")
         )
     }
 

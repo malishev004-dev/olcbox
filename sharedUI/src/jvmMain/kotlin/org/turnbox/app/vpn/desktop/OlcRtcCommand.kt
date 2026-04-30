@@ -14,11 +14,16 @@ internal data class OlcRtcCommand(
         return listOf(
             binary.toString(),
             "-mode", "cnc",
+            "-link", "direct",
+            "-transport", config.transport,
             "-provider", config.bypassProvider,
             "-id", config.id,
             "-key", config.key,
             "-socks-host", socksHost,
-            "-socks-port", socksPort.toString()
+            "-socks-port", socksPort.toString(),
+            "-dns", "1.1.1.1:53",
+            "-vp8-fps", config.vp8Fps.toString(),
+            "-vp8-batch", config.vp8Batch.toString()
         )
     }
 }

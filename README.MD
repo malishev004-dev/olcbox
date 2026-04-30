@@ -14,10 +14,10 @@ Linux desktop builds use TUN mode: local `olcrtc` SOCKS5 plus bundled `hev-socks
 - The `olcrtc` fork must be available locally.
 - Linux TUN mode requires `iproute2`, `/dev/net/tun`, and root/Polkit/sudo privileges.
 
-By default Gradle expects the fork here:
+For local development keep the `olcrtc` fork next to this repository or pass it explicitly.
 
 ```bash
-/Users/alexanderanisimov/Personal/Projects/olcrtc
+../olcrtc-original
 ```
 
 Use `OLCRTC_REPO` if the fork is somewhere else:

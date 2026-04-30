@@ -115,6 +115,7 @@ internal class WindowsProxyController : DesktopProxyController {
     override suspend fun enable(pacUrl: String) {
         backup = readState()
         enableCommands(pacUrl).forEach { runCommand(it) }
+        refreshProxySettings()
     }
 
     override suspend fun restore() {
@@ -122,6 +123,7 @@ internal class WindowsProxyController : DesktopProxyController {
         restoreCommands(state).forEach { command ->
             runCatching { runCommand(command) }
         }
+        refreshProxySettings()
         backup = null
     }
 
@@ -148,14 +150,17 @@ internal class WindowsProxyController : DesktopProxyController {
             ?.takeIf { it.isNotBlank() }
     }
 
+    private suspend fun refreshProxySettings() {
+        runCatching { runCommand(refreshCommand()) }
+    }
+
     companion object {
         private const val REGISTRY_KEY = "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings"
 
         fun enableCommands(pacUrl: String): List<List<String>> {
             return listOf(
                 setDwordCommand("ProxyEnable", "0"),
-                setStringCommand("AutoConfigURL", pacUrl),
-                refreshCommand()
+                setStringCommand("AutoConfigURL", pacUrl)
             )
         }
 
@@ -164,8 +169,7 @@ internal class WindowsProxyController : DesktopProxyController {
                 valueCommand("ProxyEnable", state.proxyEnable, isDword = true),
                 valueCommand("ProxyServer", state.proxyServer, isDword = false),
                 valueCommand("ProxyOverride", state.proxyOverride, isDword = false),
-                valueCommand("AutoConfigURL", state.autoConfigUrl, isDword = false),
-                refreshCommand()
+                valueCommand("AutoConfigURL", state.autoConfigUrl, isDword = false)
             )
         }
 
@@ -187,12 +191,12 @@ internal class WindowsProxyController : DesktopProxyController {
             return listOf("reg", "add", REGISTRY_KEY, "/v", name, "/t", "REG_DWORD", "/d", value, "/f")
         }
 
-        private fun refreshCommand(): List<String> {
+        fun refreshCommand(): List<String> {
             val script = """
-                ${'$'}signature = '[DllImport("wininet.dll", SetLastError = true)] public static extern bool InternetSetOption(IntPtr hInternet, int dwOption, IntPtr lpBuffer, int dwBufferLength);';
+                ${'$'}signature = '[System.Runtime.InteropServices.DllImport("wininet.dll", SetLastError = true)] public static extern bool InternetSetOption(System.IntPtr hInternet, int dwOption, System.IntPtr lpBuffer, int dwBufferLength);';
                 Add-Type -MemberDefinition ${'$'}signature -Name WinInet -Namespace Native;
-                [Native.WinInet]::InternetSetOption([IntPtr]::Zero, 39, [IntPtr]::Zero, 0) | Out-Null;
-                [Native.WinInet]::InternetSetOption([IntPtr]::Zero, 37, [IntPtr]::Zero, 0) | Out-Null;
+                [Native.WinInet]::InternetSetOption([System.IntPtr]::Zero, 39, [System.IntPtr]::Zero, 0) | Out-Null;
+                [Native.WinInet]::InternetSetOption([System.IntPtr]::Zero, 37, [System.IntPtr]::Zero, 0) | Out-Null;
             """.trimIndent()
             return listOf("powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", script)
         }
