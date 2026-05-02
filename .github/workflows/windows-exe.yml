@@ -276,24 +276,30 @@ jobs:
       - name: Publish public GitHub Release assets
         env:
           GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
         run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-
-          git tag -f nightly "$GITHUB_SHA"
-          git push -f origin refs/tags/nightly
-
           mapfile -t assets < <(find dist -type f | sort)
           if [ "${#assets[@]}" -eq 0 ]; then
             echo "No release assets found"
             exit 1
           fi
+          release_notes="Latest desktop and Android builds from main at ${GITHUB_SHA}."
 
           if gh release view nightly >/dev/null 2>&1; then
+            mapfile -t existing_asset_ids < <(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/nightly" --jq '.assets[].id')
+            for asset_id in "${existing_asset_ids[@]}"; do
+              gh api --method DELETE "repos/${GITHUB_REPOSITORY}/releases/assets/${asset_id}" >/dev/null
+            done
+
+            gh release edit nightly \
+              --title "Nightly Turnbox builds" \
+              --notes "$release_notes" \
+              --prerelease
             gh release upload nightly "${assets[@]}" --clobber
           else
             gh release create nightly "${assets[@]}" \
+              --target "$GITHUB_SHA" \
               --title "Nightly Turnbox builds" \
-              --notes "Latest desktop and Android builds from main." \
+              --notes "$release_notes" \
               --prerelease
           fi
