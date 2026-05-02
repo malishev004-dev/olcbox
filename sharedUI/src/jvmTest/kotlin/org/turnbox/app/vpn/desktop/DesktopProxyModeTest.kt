@@ -59,17 +59,19 @@ class DesktopProxyModeTest {
 
     @Test
     fun olcRtcCommandUsesDesktopWbStreamProviderAlias() {
-        val command = OlcRtcCommand(
-            binary = Path.of("/tmp/olcrtc"),
-            location = LocationConfig(
-                name = "WB",
-                id = "room-wb",
-                key = "b".repeat(64),
-                bypassProvider = LocationConfig.PROVIDER_WB_STREAM
-            )
-        ).args()
+        listOf(LocationConfig.PROVIDER_WB_STREAM, "wbstream").forEach { provider ->
+            val command = OlcRtcCommand(
+                binary = Path.of("/tmp/olcrtc"),
+                location = LocationConfig(
+                    name = "WB",
+                    id = "room-wb",
+                    key = "b".repeat(64),
+                    bypassProvider = provider
+                )
+            ).args()
 
-        assertEquals("wbstream", command[command.indexOf("-provider") + 1])
+            assertEquals("wbstream", command[command.indexOf("-provider") + 1])
+        }
     }
 
     @Test
