@@ -16,8 +16,9 @@ final class SwiftOlcRtcManager: NSObject, @unchecked Sendable, IosOlcRtcBridge {
     // below is necessary but NOT sufficient on its own — we must feed it continuous
     // low-amplitude audio so the OS treats the app as actively playing and keeps the
     // process (and the SOCKS port) alive while the user is in another app.
-    private let keepAliveEngine = AVAudioEngine()
+    private var keepAliveEngine = AVAudioEngine()
     private var keepAliveSource: AVAudioSourceNode?
+    private var audioObserversRegistered = false
 
     func setLogWriter(writer: IosLogWriter?) {
         lock.lock()
@@ -230,25 +231,28 @@ final class SwiftOlcRtcManager: NSObject, @unchecked Sendable, IosOlcRtcBridge {
     // listener) running in the background. Pure digital zero can be flagged by the
     // OS as "no real audio"; a tiny amount of noise keeps the session genuinely active.
     private func startKeepAliveAudio() {
-        let engine = keepAliveEngine
-        if engine.isRunning { return }
+        registerAudioNotificationsIfNeeded()
 
-        let output = engine.outputNode
-        let format = output.inputFormat(forBus: 0)
-        let source = AVAudioSourceNode { _, _, frameCount, audioBufferList -> OSStatus in
-            let buffers = UnsafeMutableAudioBufferListPointer(audioBufferList)
-            for buffer in buffers {
-                guard let data = buffer.mData?.assumingMemoryBound(to: Float.self) else { continue }
-                for frame in 0..<Int(frameCount) {
-                    data[frame] = Float.random(in: -0.0001...0.0001)
+        let engine = keepAliveEngine
+        if keepAliveSource == nil {
+            let output = engine.outputNode
+            let format = output.inputFormat(forBus: 0)
+            let source = AVAudioSourceNode { _, _, frameCount, audioBufferList -> OSStatus in
+                let buffers = UnsafeMutableAudioBufferListPointer(audioBufferList)
+                for buffer in buffers {
+                    guard let data = buffer.mData?.assumingMemoryBound(to: Float.self) else { continue }
+                    for frame in 0..<Int(frameCount) {
+                        data[frame] = Float.random(in: -0.0001...0.0001)
+                    }
                 }
+                return noErr
             }
-            return noErr
+            keepAliveSource = source
+            engine.attach(source)
+            engine.connect(source, to: output, format: format)
         }
 
-        keepAliveSource = source
-        engine.attach(source)
-        engine.connect(source, to: output, format: format)
+        guard !engine.isRunning else { return }
         do {
             try engine.start()
         } catch {
@@ -267,6 +271,69 @@ final class SwiftOlcRtcManager: NSObject, @unchecked Sendable, IosOlcRtcBridge {
         if let source = keepAliveSource {
             engine.detach(source)
             keepAliveSource = nil
+        }
+    }
+
+    // After a media services reset the AVAudioEngine instance is permanently
+    // invalid and must be recreated from scratch.
+    private func rebuildKeepAliveAudio() {
+        keepAliveEngine.stop()
+        keepAliveSource = nil
+        keepAliveEngine = AVAudioEngine()
+        startKeepAliveAudio()
+    }
+
+    // Without this, a phone call / Siri / alarm pauses the engine and it never
+    // resumes on its own — the SOCKS listener would then die on the next suspend.
+    private func registerAudioNotificationsIfNeeded() {
+        guard !audioObserversRegistered else { return }
+        audioObserversRegistered = true
+
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleAudioInterruption(_:)),
+            name: AVAudioSession.interruptionNotification,
+            object: nil
+        )
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleMediaServicesReset(_:)),
+            name: AVAudioSession.mediaServicesWereResetNotification,
+            object: nil
+        )
+    }
+
+    @objc private func handleAudioInterruption(_ notification: Notification) {
+        guard
+            let info = notification.userInfo,
+            let raw = info[AVAudioSessionInterruptionTypeKey] as? UInt,
+            let type = AVAudioSession.InterruptionType(rawValue: raw)
+        else { return }
+
+        guard type == .ended else { return }
+
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            guard self.keepAliveSource != nil else { return }
+            try? AVAudioSession.sharedInstance().setActive(true)
+            self.startKeepAliveAudio()
+        }
+    }
+
+    @objc private func handleMediaServicesReset(_ notification: Notification) {
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            do {
+                let session = AVAudioSession.sharedInstance()
+                try session.setCategory(.playback, mode: .default, options: [.mixWithOthers])
+                try session.setActive(true)
+            } catch {
+                self.lock.lock()
+                let writer = self.logWriter
+                self.lock.unlock()
+                writer?.writeLog(message: "iOS audio session reset recovery failed: \(error.localizedDescription)")
+            }
+            self.rebuildKeepAliveAudio()
         }
     }
 
