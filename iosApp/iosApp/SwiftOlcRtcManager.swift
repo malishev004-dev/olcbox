@@ -11,6 +11,14 @@ final class SwiftOlcRtcManager: NSObject, @unchecked Sendable, IosOlcRtcBridge {
     private var backgroundTask: UIBackgroundTaskIdentifier = .invalid
     private let lock = NSLock()
 
+    // Keep-alive: iOS suspends a backgrounded app (and its local SOCKS listener)
+    // unless it is *actively* producing audio. The `.playback` session configured
+    // below is necessary but NOT sufficient on its own — we must feed it continuous
+    // low-amplitude audio so the OS treats the app as actively playing and keeps the
+    // process (and the SOCKS port) alive while the user is in another app.
+    private let keepAliveEngine = AVAudioEngine()
+    private var keepAliveSource: AVAudioSourceNode?
+
     func setLogWriter(writer: IosLogWriter?) {
         lock.lock()
         defer { lock.unlock() }
@@ -208,6 +216,7 @@ final class SwiftOlcRtcManager: NSObject, @unchecked Sendable, IosOlcRtcBridge {
                 let session = AVAudioSession.sharedInstance()
                 try session.setCategory(.playback, mode: .default, options: [.mixWithOthers])
                 try session.setActive(true)
+                self.startKeepAliveAudio()
             } catch {
                 self.lock.lock()
                 let writer = self.logWriter
@@ -217,8 +226,53 @@ final class SwiftOlcRtcManager: NSObject, @unchecked Sendable, IosOlcRtcBridge {
         }
     }
 
+    // Continuously render near-silent audio so iOS keeps the app (and its SOCKS
+    // listener) running in the background. Pure digital zero can be flagged by the
+    // OS as "no real audio"; a tiny amount of noise keeps the session genuinely active.
+    private func startKeepAliveAudio() {
+        let engine = keepAliveEngine
+        if engine.isRunning { return }
+
+        let output = engine.outputNode
+        let format = output.inputFormat(forBus: 0)
+        let source = AVAudioSourceNode { _, _, frameCount, audioBufferList -> OSStatus in
+            let buffers = UnsafeMutableAudioBufferListPointer(audioBufferList)
+            for buffer in buffers {
+                guard let data = buffer.mData?.assumingMemoryBound(to: Float.self) else { continue }
+                for frame in 0..<Int(frameCount) {
+                    data[frame] = Float.random(in: -0.0001...0.0001)
+                }
+            }
+            return noErr
+        }
+
+        keepAliveSource = source
+        engine.attach(source)
+        engine.connect(source, to: output, format: format)
+        do {
+            try engine.start()
+        } catch {
+            self.lock.lock()
+            let writer = self.logWriter
+            self.lock.unlock()
+            writer?.writeLog(message: "iOS keep-alive audio engine failed to start: \(error.localizedDescription)")
+        }
+    }
+
+    private func stopKeepAliveAudio() {
+        let engine = keepAliveEngine
+        if engine.isRunning {
+            engine.stop()
+        }
+        if let source = keepAliveSource {
+            engine.detach(source)
+            keepAliveSource = nil
+        }
+    }
+
     private func deactivatePlaybackSession() {
         DispatchQueue.main.async { [weak self] in
+            self?.stopKeepAliveAudio()
             do {
                 try AVAudioSession.sharedInstance().setActive(false, options: [.notifyOthersOnDeactivation])
             } catch {
